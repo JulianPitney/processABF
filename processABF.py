@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from tkinter import filedialog
 from tkinter import *
 import os
-
+import xlwt
 
 
 class ABFProcessor(object):
@@ -74,19 +74,29 @@ class ABFProcessor(object):
 
 
 
-    def gen_trace_plot(self, xPoints, yPoints, title, savePath):
+    def gen_trace_plot(self, xPoints, yPoints, traceNumber, savePath, baselineIndex, peakIndex):
 
-
-        plt.figure(figsize=(20, 10))
-        plt.title(title)
-        plt.xlabel('Time (s)')
-        plt.ylabel('Current (pA)')
-        plt.plot(xPoints, yPoints, 'b', alpha=0.7)
-        plt.savefig(savePath + title + '.svg')
-        plt.close()
-
+        fig, ax = plt.subplots(figsize=(40, 10))  # note we must use plt.subplots, not plt.subplot
+        plt.text(xPoints[baselineIndex], yPoints[baselineIndex], "B", fontsize=10)
+        plt.text(xPoints[peakIndex], yPoints[peakIndex], "P", fontsize=10)
+        ax.plot(xPoints, yPoints, 'b', alpha=0.7)
+        fig.savefig(savePath + str(traceNumber) + '.svg')
+        plt.close(fig)
 
     def process_traces(self, traces, dt, nb_steps, abfPath):
+
+        # Gen excel workbook for current file
+        book = xlwt.Workbook(encoding="utf-8")
+        sheet1 = book.add_sheet("TRACES")
+        sheet1.write(0, 0, "TRACE_NUMBER")
+        sheet1.write(0, 1, "PEAK_CURRENT(pA)")
+        sheet1.write(0, 2, "RISE_TIME(s)")
+        sheet1.write(0, 3, "DECAY")
+        sheet1.col(0).width = 256 * 20
+        sheet1.col(1).width = 256 * 20
+        sheet1.col(2).width = 256 * 20
+        sheet1.col(3).width = 256 * 20
+        savePath = os.path.splitext(abfPath)[0]
 
         startX = int(0 / dt)
         endX = nb_steps - 1
@@ -99,16 +109,28 @@ class ABFProcessor(object):
 
         for traceIndex in range(0, numTraces):
 
+            print("TRACE" + str(traceIndex))
             trace = traces[traceIndex]
-            self.process_trace(trace, timePoints, traceIndex, dt)
+            peakCurrent, riseTime, decay, baselineIndex, peakIndex = self.process_trace(trace, timePoints, dt)
+
+            if peakCurrent == None or riseTime == None or decay == None:
+                sheet1.write(traceIndex + 1, 0, "NOT_FOUND")
+                sheet1.write(traceIndex + 1, 1, "NOT_FOUND")
+                sheet1.write(traceIndex + 1, 2, "NOT_FOUND")
+                sheet1.write(traceIndex + 1, 3, "NOT_FOUND")
+            else:
+                sheet1.write(traceIndex + 1, 0, traceIndex + 1)
+                sheet1.write(traceIndex + 1, 1, peakCurrent)
+                sheet1.write(traceIndex + 1, 2, riseTime)
+                sheet1.write(traceIndex + 1, 3, decay)
 
             if self.genGraphsState.get():
-                outputPath = os.path.dirname(abfPath) + "/"
-                self.gen_trace_plot(subSampleTimePoints, trace[traceSampleIndexes], str(traceIndex), outputPath)
+                self.gen_trace_plot(subSampleTimePoints, trace[traceSampleIndexes], traceIndex + 1, savePath, baselineIndex, peakIndex)
 
+        book.save(savePath + ".xls")
         print("Processing complete!")
 
-    def process_trace(self, trace, timePoints, traceIndex, dt):
+    def process_trace(self, trace, timePoints, dt):
 
         gradients = np.gradient(trace)
         maxGradientIndex = np.argmax(gradients)
@@ -125,20 +147,17 @@ class ABFProcessor(object):
             Y1_currentBaseline = trace[timeStepsUntilBaseline]
 
             timeStepsUntilEventOver = timeStepsUntilBaseline + int(0.3 / dt)
-            eventCurrents = trace[minGradientIndex + 100:timeStepsUntilEventOver]
+            eventCurrents = trace[minGradientIndex + 50:timeStepsUntilEventOver]
             Y2_eventCurrentMin = np.amin(eventCurrents)
+            eventCurrentMinIndex = np.argmin(eventCurrents) + minGradientIndex + 50
             X2_eventCurrentMinTime = timePoints[np.argmin(eventCurrents) + minGradientIndex - 1]
 
-            peakCurrent = Y2_eventCurrentMin - Y1_currentBaseline
+            peakCurrent = abs(Y2_eventCurrentMin - Y1_currentBaseline)
             riseTime = X2_eventCurrentMinTime - X1_timeBaseline
-
-            print("TRACE " + str(traceIndex) + "\n" +
-                  "PEAK_CURRENT= " + str(peakCurrent) + "(pA)\n" +
-                  "RISE_TIME= " + str(riseTime) + "(s)\n")
-
+            decay = 0
+            return peakCurrent, riseTime, decay, timeStepsUntilBaseline, eventCurrentMinIndex
         else:
-            print("TRACE " + str(traceIndex) + "\n" +
-                  "No peak found!\n")
+            return None, None, None, 0, 0
 
 
 
