@@ -21,7 +21,7 @@ class ABFProcessor(object):
     def gen_widgets(self):
 
         mainFrame = Frame(self.master)
-        processFolderButton = Button(mainFrame, width=20, height=3, text="Process Folder", font="Verdana 30 bold", borderwidth=6, command=lambda: self.process_folder())
+        processFolderButton = Button(mainFrame, state=DISABLED, width=20, height=3, text="Process Folder", font="Verdana 30 bold", borderwidth=6, command=lambda: self.process_folder())
         processFileButton = Button(mainFrame, width=20, height=3, text="Process File", font="Verdana 30 bold", borderwidth=6, command=lambda: self.process_file())
         self.genGraphsState = BooleanVar()
         genGraphsStateButton = Checkbutton(mainFrame, width=40, height=4, text="Generate Graphs", variable=self.genGraphsState)
@@ -34,9 +34,11 @@ class ABFProcessor(object):
 
 
     def process_file(self):
+
         filePath = self.select_abf_file()
-        traces, dt, nb_steps, nb_sweeps = self.load_abf(filePath)
-        self.process_traces(traces, dt, nb_steps, filePath)
+        if filePath != "":
+            traces, dt, nb_steps, nb_sweeps = self.load_abf(filePath)
+            self.process_traces(traces, dt, nb_steps, filePath)
 
     def process_folder(self):
         directoryPath = self.select_directory()
@@ -104,6 +106,7 @@ class ABFProcessor(object):
                 outputPath = os.path.dirname(abfPath) + "/"
                 self.gen_trace_plot(subSampleTimePoints, trace[traceSampleIndexes], str(traceIndex), outputPath)
 
+        print("Processing complete!")
 
     def process_trace(self, trace, timePoints, traceIndex, dt):
 
