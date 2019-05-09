@@ -1,6 +1,8 @@
 from __future__ import division
 from neo import AxonIO
 import numpy as np
+import matplotlib
+matplotlib.use("TkAgg") # Use this on Mac
 import matplotlib.pyplot as plt
 from tkinter import filedialog
 from tkinter import *
