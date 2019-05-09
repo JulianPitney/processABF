@@ -74,10 +74,11 @@ class ABFProcessor(object):
 
 
 
-    def gen_trace_plot(self, xPoints, yPoints, traceNumber, savePath, baselineIndex, peakIndex):
+    def gen_trace_plot(self, xPoints, yPoints, traceNumber, savePath, baselineIndex, eventCurrentBaselineIndex, peakIndex):
 
         fig, ax = plt.subplots(figsize=(40, 10))  # note we must use plt.subplots, not plt.subplot
-        plt.text(xPoints[baselineIndex], yPoints[baselineIndex], "B", fontsize=10)
+        plt.text(xPoints[baselineIndex], yPoints[baselineIndex], "BC", fontsize=10)
+        plt.text(xPoints[eventCurrentBaselineIndex], yPoints[eventCurrentBaselineIndex], "BT")
         plt.text(xPoints[peakIndex], yPoints[peakIndex], "P", fontsize=10)
         ax.plot(xPoints, yPoints, 'b', alpha=0.7)
         fig.savefig(savePath + str(traceNumber) + '.svg')
@@ -111,7 +112,7 @@ class ABFProcessor(object):
 
             print("TRACE" + str(traceIndex))
             trace = traces[traceIndex]
-            peakCurrent, riseTime, decay, baselineIndex, peakIndex = self.process_trace(trace, timePoints, dt)
+            peakCurrent, riseTime, decay, baselineIndex, peakIndex, eventCurrentBaselineIndex = self.process_trace(trace, timePoints, dt)
 
             if peakCurrent == None or riseTime == None or decay == None:
                 sheet1.write(traceIndex + 1, 0, "NOT_FOUND")
@@ -125,7 +126,7 @@ class ABFProcessor(object):
                 sheet1.write(traceIndex + 1, 3, decay)
 
             if self.genGraphsState.get():
-                self.gen_trace_plot(subSampleTimePoints, trace[traceSampleIndexes], traceIndex + 1, savePath, baselineIndex, peakIndex)
+                self.gen_trace_plot(subSampleTimePoints, trace[traceSampleIndexes], traceIndex + 1, savePath, baselineIndex, eventCurrentBaselineIndex, peakIndex,)
 
         book.save(savePath + ".xls")
         print("Processing complete!")
@@ -142,20 +143,25 @@ class ABFProcessor(object):
 
         if 0.001 > delta > 0:
 
-            timeStepsUntilBaseline = int((timePoints[maxGradientIndex] - 0.05) / (dt))
-            X1_timeBaseline = timePoints[timeStepsUntilBaseline]
-            Y1_currentBaseline = trace[timeStepsUntilBaseline]
+            baselineStartIndex = int((timePoints[maxGradientIndex] - 0.12) / (dt))
+            baselineStopIndex = int((timePoints[maxGradientIndex] - 0.02) /(dt))
 
-            timeStepsUntilEventOver = timeStepsUntilBaseline + int(0.3 / dt)
+            timeStepsUntilEventOver = baselineStartIndex + int(0.3 / dt)
             eventCurrents = trace[minGradientIndex + 50:timeStepsUntilEventOver]
+
+            Y1_currentBaseline = np.average(trace[baselineStartIndex:baselineStopIndex])
             Y2_eventCurrentMin = np.amin(eventCurrents)
             eventCurrentMinIndex = np.argmin(eventCurrents) + minGradientIndex + 50
             X2_eventCurrentMinTime = timePoints[np.argmin(eventCurrents) + minGradientIndex - 1]
+            eventCurrents = trace[minGradientIndex + 50:eventCurrentMinIndex]
+            X1_eventCurrentMaxIndex = np.argmax(eventCurrents) + minGradientIndex + 50
+            X1_timeBaseline = timePoints[X1_eventCurrentMaxIndex]
+            eventCurrentBaselineIndex = X1_eventCurrentMaxIndex
 
             peakCurrent = abs(Y2_eventCurrentMin - Y1_currentBaseline)
             riseTime = X2_eventCurrentMinTime - X1_timeBaseline
             decay = 0
-            return peakCurrent, riseTime, decay, timeStepsUntilBaseline, eventCurrentMinIndex
+            return peakCurrent, riseTime, decay, baselineStartIndex, eventCurrentMinIndex, eventCurrentBaselineIndex
         else:
             return None, None, None, 0, 0
 
