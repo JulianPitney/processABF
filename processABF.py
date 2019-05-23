@@ -8,14 +8,17 @@ import os
 import xlwt
 
 
+GUI_ENABLE = False
+
 class ABFProcessor(object):
 
     def __init__(self):
 
-        self.master = Tk()
-        self.master.geometry("640x480")
-        self.gen_widgets()
-        self.master.mainloop()
+        if GUI_ENABLE:
+            self.master = Tk()
+            self.master.geometry("640x480")
+            self.gen_widgets()
+            self.master.mainloop()
 
 
     def gen_widgets(self):
@@ -169,6 +172,16 @@ class ABFProcessor(object):
 
 
 abfProc = ABFProcessor()
+traces, dt, nb_steps, nb_sweeps = abfProc.load_abf("C:\\Projects\\processABF\\Kieran_Data\\19507004.abf")
+startX = int(0 / dt)
+endX = nb_steps - 1
+numSamples = traces.shape[1]
+timePoints = np.linspace(startX, endX, numSamples) * dt
 
+num = 0
+for trace in traces:
+
+    abfProc.gen_trace_plot(timePoints, trace, num, ".", 0, 0, 0)
+    num += 1
 
 
