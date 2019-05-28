@@ -8,6 +8,11 @@ from tkinter import filedialog
 from tkinter import *
 import os
 import xlwt
+import scipy.signal as sig
+from time import sleep
+import scipy.optimize as sp_opt
+import plotly.graph_objs as go
+
 
 
 GUI_ENABLE = False
@@ -15,6 +20,7 @@ GUI_ENABLE = False
 class ABFProcessor(object):
 
     def __init__(self):
+
 
         if GUI_ENABLE:
             self.master = Tk()
@@ -43,9 +49,10 @@ class ABFProcessor(object):
         filePath = self.select_abf_file()
         if filePath != "":
             traces, dt, nb_steps, nb_sweeps = self.load_abf(filePath)
-            self.process_traces(traces, dt, nb_steps, filePath)
+            self.process_traces_pam1(traces, dt, nb_steps, filePath)
 
     def process_folder(self):
+        #TODO: Implement folder batch processing of ABFs
         directoryPath = self.select_directory()
         print(directoryPath)
 
@@ -78,29 +85,73 @@ class ABFProcessor(object):
         return traces, dt, nb_steps, nb_sweeps
 
 
+    def process_ABF(self, traces, dt, numSteps, numSweeps):
 
-    def gen_trace_plot(self, xPoints, yPoints, traceNumber, savePath, baselineIndex, baselineEndIndex, peakIndex, eventCurrentBaselineIndex, maxGradientIndex, minGradientIndex):
+        # Specifies the minimum height cutoff of each peak.
+        peakMinHeightThresh = 600
+        # Specifies the minimum number of samples between each peak.
+        peakMinXDistance = 490
+        # Specifies the minimum prominence of each peak.
+        peakMinProminence = peakMinHeightThresh - 200
+        # After finding the peaks, we want to search for the minimum value in
+        # the area between the current peak up until just before the next peak.
+        # This value specifies how many samples to pad between the search area
+        # and the peaks on either side.
+        interpeakMinValSearchAreaPadding = 10
 
-        fig, ax = plt.subplots(figsize=(40, 10))  # note we must use plt.subplots, not plt.subplot
-        plt.text(xPoints[baselineIndex], yPoints[baselineIndex], "BCS", fontsize=10)
-        plt.text(xPoints[baselineEndIndex], yPoints[baselineEndIndex], "BCE", fontsize=10)
-        plt.text(xPoints[peakIndex], yPoints[peakIndex], "P", fontsize=10)
-        plt.text(xPoints[eventCurrentBaselineIndex], yPoints[eventCurrentBaselineIndex], "BT")
-        plt.text(xPoints[maxGradientIndex], yPoints[maxGradientIndex], "MAG", fontsize=10)
-        plt.text(xPoints[minGradientIndex], yPoints[minGradientIndex], "MIG", fontsize=10)
+        startX = int(0 / dt)
+        endX = numSteps - 1
+        numSamples = traces.shape[1]
+        timePoints = np.linspace(startX, endX, numSamples) * dt
 
-        # BCS = Start of baseline chunk used for average
-        # BCE = End of baseline chunk used for average
-        # P = Peak
-        # BT = Time point used for baseline
-        # MAG = max gradient point
-        # MIG = min gradient point
+        for trace in traces:
 
-        ax.plot(xPoints, yPoints, 'b', alpha=0.7)
-        fig.savefig(savePath + str(traceNumber) + '.svg')
-        plt.close(fig)
+            peaks = sig.find_peaks(trace, peakMinHeightThresh, distance=peakMinXDistance, prominence=peakMinProminence)
+            peakIndexes = peaks[0]
+            peakValues = peaks[1]["peak_heights"]
 
-    def process_traces(self, traces, dt, nb_steps, abfPath):
+
+
+            fig, ax = plt.subplots(figsize=(40, 10))  # note we must use plt.subplots, not plt.subplot
+
+
+            trophIndexes = []
+            trophValues = []
+            for peakIndex in peakIndexes:
+
+                searchSection = trace[peakIndex + interpeakMinValSearchAreaPadding: peakIndex + peakMinXDistance]
+
+                trophIndex = np.argmin(searchSection) + peakIndex + interpeakMinValSearchAreaPadding
+                trophValue = trace[trophIndex]
+                trophIndexes.append(trophIndex)
+                trophValues.append(trophValue)
+
+
+            # plot the points we found
+            for i in range(0, len(peakIndexes)):
+                plt.text(timePoints[trophIndexes[i]], trace[trophIndexes[i]], "T", fontsize=10)
+                plt.text(timePoints[peakIndexes[i]], trace[peakIndexes[i]], "P", fontsize=10)
+
+
+            ax.plot(timePoints, trace, 'b', alpha=0.7)
+            plt.show()
+            sleep(10)
+            exit()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    def process_traces_pam1(self, traces, dt, nb_steps, abfPath):
 
         # Gen excel workbook for current file
         book = xlwt.Workbook(encoding="utf-8")
@@ -128,7 +179,7 @@ class ABFProcessor(object):
 
             print("TRACE" + str(traceIndex))
             trace = traces[traceIndex]
-            peakCurrent, riseTime, decay, baselineIndex, baselineEndIndex, peakIndex, eventCurrentBaselineIndex, maxGradientIndex, minGradientIndex = self.process_trace(trace, timePoints, dt)
+            peakCurrent, riseTime, decay, baselineIndex, baselineEndIndex, peakIndex, eventCurrentBaselineIndex, maxGradientIndex, minGradientIndex = self.process_trace_pam1(trace, timePoints, dt)
 
             if peakCurrent == None or riseTime == None or decay == None:
                 sheet1.write(traceIndex + 1, 0, "NOT_FOUND")
@@ -142,32 +193,20 @@ class ABFProcessor(object):
                 sheet1.write(traceIndex + 1, 3, decay)
 
             if self.genGraphsState.get():
-                self.gen_trace_plot(subSampleTimePoints, trace[traceSampleIndexes], traceIndex + 1, savePath, baselineIndex, baselineEndIndex, peakIndex, eventCurrentBaselineIndex, maxGradientIndex, minGradientIndex)
+                self.gen_trace_plot_pam1(subSampleTimePoints, trace[traceSampleIndexes], traceIndex + 1, savePath, baselineIndex, baselineEndIndex, peakIndex, eventCurrentBaselineIndex, maxGradientIndex, minGradientIndex)
 
         book.save(savePath + ".xls")
         print("Processing complete!")
 
-    def check_none(obj):
 
-        if obj == None:
-            print("Error: Object was empty")
-            return True
-        else:
-            return False
 
-    def process_trace(self, trace, timePoints, dt):
-
-        if check_none(trace):
-            return -1
+    def process_trace_pam1(self, trace, timePoints, dt):
 
 
         # Find the points of max and min rate of change.
         # This should reliably find the spike generated
         # by the electrode at the start of stimulation.
         gradients = np.gradient(trace)
-        if check_none(gradients):
-            return -1
-
         maxGradientIndex = np.argmax(gradients)
         minGradientIndex = np.argmin(gradients)
         timeOfMaxGradient = timePoints[maxGradientIndex]
@@ -215,23 +254,35 @@ class ABFProcessor(object):
 
             return peakCurrent, riseTime, decay, baselineStartIndex, baselineStopIndex, eventCurrentMinIndex, X1_eventCurrentMaxIndex, maxGradientIndex, minGradientIndex
         else:
-            # No spike found 
+            # No spike found
             return None, None, None, 0, 0, 0, 0, 0, 0
+
+
+
+    def gen_trace_plot_pam1(self, xPoints, yPoints, traceNumber, savePath, baselineIndex, baselineEndIndex, peakIndex, eventCurrentBaselineIndex, maxGradientIndex, minGradientIndex):
+
+        fig, ax = plt.subplots(figsize=(40, 10))  # note we must use plt.subplots, not plt.subplot
+        plt.text(xPoints[baselineIndex], yPoints[baselineIndex], "BCS", fontsize=10)
+        plt.text(xPoints[baselineEndIndex], yPoints[baselineEndIndex], "BCE", fontsize=10)
+        plt.text(xPoints[peakIndex], yPoints[peakIndex], "P", fontsize=10)
+        plt.text(xPoints[eventCurrentBaselineIndex], yPoints[eventCurrentBaselineIndex], "BT")
+        plt.text(xPoints[maxGradientIndex], yPoints[maxGradientIndex], "MAG", fontsize=10)
+        plt.text(xPoints[minGradientIndex], yPoints[minGradientIndex], "MIG", fontsize=10)
+
+        # BCS = Start of baseline chunk used for average
+        # BCE = End of baseline chunk used for average
+        # P = Peak
+        # BT = Time point used for baseline
+        # MAG = max gradient point
+        # MIG = min gradient point
+
+        ax.plot(xPoints, yPoints, 'b', alpha=0.7)
+        fig.savefig(savePath + str(traceNumber) + '.svg')
+        plt.close(fig)
 
 
 
 
 abfProc = ABFProcessor()
-traces, dt, nb_steps, nb_sweeps = abfProc.load_abf("C:\\Projects\\processABF\\Kieran_Data\\19507004.abf")
-startX = int(0 / dt)
-endX = nb_steps - 1
-numSamples = traces.shape[1]
-timePoints = np.linspace(startX, endX, numSamples) * dt
-
-num = 0
-for trace in traces:
-
-    abfProc.gen_trace_plot(timePoints, trace, num, ".", 0, 0, 0)
-    num += 1
-
-
+traces, dt, nb_steps, nb_sweeps = abfProc.load_abf("./Kieran_Data/19507004.abf")
+abfProc.process_ABF(traces,dt,nb_steps,nb_sweeps)
