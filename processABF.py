@@ -1,288 +1,165 @@
 from __future__ import division
-from neo import AxonIO
-import numpy as np
 import matplotlib
 matplotlib.use("TkAgg") # Use this on Mac
-import matplotlib.pyplot as plt
 from tkinter import filedialog
 from tkinter import *
-import os
+import synappy as syn
+from os import listdir
+from os.path import isfile, join
 import xlwt
-import scipy.signal as sig
-from time import sleep
-import scipy.optimize as sp_opt
-import plotly.graph_objs as go
 
 
-
-GUI_ENABLE = False
 
 class ABFProcessor(object):
 
     def __init__(self):
 
 
-        if GUI_ENABLE:
-            self.master = Tk()
-            self.master.geometry("640x480")
-            self.gen_widgets()
-            self.master.mainloop()
+        self.events = []
+        self.FIND_STIM_EVENTS = True
+        self.FIND_SPONTANEOUS_EVENTS = False
+
+        self.master = Tk()
+        self.master.geometry("850x550")
+        self.gen_widgets()
+        self.master.mainloop()
+
 
 
     def gen_widgets(self):
 
         mainFrame = Frame(self.master)
-        processFolderButton = Button(mainFrame, state=DISABLED, width=20, height=3, text="Process Folder", font="Verdana 30 bold", borderwidth=6, command=lambda: self.process_folder())
-        processFileButton = Button(mainFrame, width=20, height=3, text="Process File", font="Verdana 30 bold", borderwidth=6, command=lambda: self.process_file())
-        self.genGraphsState = BooleanVar()
-        genGraphsStateButton = Checkbutton(mainFrame, width=40, height=4, text="Generate Graphs", variable=self.genGraphsState)
 
-        processFolderButton.pack(anchor=CENTER)
-        processFileButton.pack(anchor=CENTER)
-        genGraphsStateButton.pack(anchor=CENTER)
-        mainFrame.pack(expand=True)
+        helpMessage = """
+        Click the button to select a directory of abf files to analyze. 
+        An xls file will be generated where each line represents an event.
+        
+        Each event will contain:
+        
+            - FILE_NAME
+            - TRACE_NUM
+            - STIM_NUM
+            - TAO
+            - BASELINE_OFFSET
+            - NORMALIZED_PEAK_AMPLITUDE
+            - PEAK_AMPLITUDE_INDEX
+            - PEAK_TIME_FROM_STIM_ON
+            - ???
+            - LATENCY_SECONDS
+            - MEAN_BASELINE
+            - STDEV_BASELINE
+        
+        NOTE1: Each event in the file can be uniquely identified by a combination of FILE_NAME, TRACE_NUM and STIM_NUM.
+            This property allows easy implementation of excel macros or python functions for calculating arbitrary 
+            metrics from arbitrary bins of events.
+            
+        NOTE2: The .abf files in the selected directory MUST contain a TTL 0-5V stimulation channel."""
 
-
-
-    def process_file(self):
-
-        filePath = self.select_abf_file()
-        if filePath != "":
-            traces, dt, nb_steps, nb_sweeps = self.load_abf(filePath)
-            self.process_traces_pam1(traces, dt, nb_steps, filePath)
-
-    def process_folder(self):
-        #TODO: Implement folder batch processing of ABFs
-        directoryPath = self.select_directory()
-        print(directoryPath)
+        helpLabel = Label(mainFrame, text=helpMessage, justify=LEFT, relief=GROOVE, padx=5, pady=15)
+        helpLabel.config(font=("Courier", 9))
+        processFilesButton = Button(mainFrame, width=12, height=2, text="Process ABFs", font="Verdana 30 bold", borderwidth=6, command=self.process_files, bg="RoyalBlue4",
+                                    activebackground="RoyalBlue3")
+        helpLabel.pack()
+        processFilesButton.pack(anchor=CENTER, pady=(10, 0))
+        mainFrame.pack(expand=True, side=TOP)
 
 
     def select_directory(self):
         return filedialog.askdirectory()
 
 
-    def select_abf_file(self):
-        return filedialog.askopenfilename(initialdir="./", title="Select file",
-                                   filetypes=(("abf files", "*.abf"), ("all files", "*.*")))
 
 
-    def load_abf(self, ABFPath):
-
-        original_file = AxonIO(filename=ABFPath)
-        data = original_file.read_block(lazy=False)
-        nb_steps = len(data.segments[0].analogsignals[0])
-        nb_sweeps = len(data.segments)
-        fs = np.array(data.segments[0].analogsignals[0].sampling_rate, dtype=int)
-        dt = 1 / fs
-        traces = np.zeros((nb_steps, nb_sweeps))
-
-        for sw_i in range(nb_sweeps):
-            traces[:, sw_i] = np.ravel(np.array(data.segments[sw_i].analogsignals[0]))
-
-        # Arrange matrix in sane way
-        traces = traces.transpose()
-
-        return traces, dt, nb_steps, nb_sweeps
+    # Takes a synwrapper object and dumps each stimulation event into a .xls
+    # Note: This function assumes the synwrapper object has already called <add_events('stim')>
+    # and <add_all()>. This function will crash otherwise.
+    def dump_synwrapper_to_xls(self, event, fileNames, directoryPath):
 
 
-    def process_ABF(self, traces, dt, numSteps, numSweeps):
+        colNames = ['STIMS', 'FILE_NAME', 'TRACE_NUM', 'STIM_NUM', 'TAO', 'BASELINE_OFFSET', 'NORMALIZED_PEAK_AMPLITUDE',
+                    'PEAK_AMPLITUDE_INDEX', 'PEAK_TIME_FROM_STIM_ON', '???', 'LATENCY_SECONDS',
+                    'MEAN_BASELINE', 'STDEV_BASELINE']
 
-        # Specifies the minimum height cutoff of each peak.
-        peakMinHeightThresh = 600
-        # Specifies the minimum number of samples between each peak.
-        peakMinXDistance = 490
-        # Specifies the minimum prominence of each peak.
-        peakMinProminence = peakMinHeightThresh - 200
-        # After finding the peaks, we want to search for the minimum value in
-        # the area between the current peak up until just before the next peak.
-        # This value specifies how many samples to pad between the search area
-        # and the peaks on either side.
-        interpeakMinValSearchAreaPadding = 10
-
-        startX = int(0 / dt)
-        endX = numSteps - 1
-        numSamples = traces.shape[1]
-        timePoints = np.linspace(startX, endX, numSamples) * dt
-
-        for trace in traces:
-
-            peaks = sig.find_peaks(trace, peakMinHeightThresh, distance=peakMinXDistance, prominence=peakMinProminence)
-            peakIndexes = peaks[0]
-            peakValues = peaks[1]["peak_heights"]
-
-
-
-            fig, ax = plt.subplots(figsize=(40, 10))  # note we must use plt.subplots, not plt.subplot
-
-
-            trophIndexes = []
-            trophValues = []
-            for peakIndex in peakIndexes:
-
-                searchSection = trace[peakIndex + interpeakMinValSearchAreaPadding: peakIndex + peakMinXDistance]
-
-                trophIndex = np.argmin(searchSection) + peakIndex + interpeakMinValSearchAreaPadding
-                trophValue = trace[trophIndex]
-                trophIndexes.append(trophIndex)
-                trophValues.append(trophValue)
-
-
-            # plot the points we found
-            for i in range(0, len(peakIndexes)):
-                plt.text(timePoints[trophIndexes[i]], trace[trophIndexes[i]], "T", fontsize=10)
-                plt.text(timePoints[peakIndexes[i]], trace[peakIndexes[i]], "P", fontsize=10)
-
-
-            ax.plot(timePoints, trace, 'b', alpha=0.7)
-            plt.show()
-            sleep(10)
-            exit()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    def process_traces_pam1(self, traces, dt, nb_steps, abfPath):
-
-        # Gen excel workbook for current file
+        # Initialize workbook
         book = xlwt.Workbook(encoding="utf-8")
-        sheet1 = book.add_sheet("TRACES")
-        sheet1.write(0, 0, "TRACE_NUMBER")
-        sheet1.write(0, 1, "PEAK_CURRENT(pA)")
-        sheet1.write(0, 2, "RISE_TIME(s)")
-        sheet1.write(0, 3, "DECAY")
-        sheet1.col(0).width = 256 * 20
-        sheet1.col(1).width = 256 * 20
-        sheet1.col(2).width = 256 * 20
-        sheet1.col(3).width = 256 * 20
-        savePath = os.path.splitext(abfPath)[0]
+        sheet1 = book.add_sheet("STIMS")
 
-        startX = int(0 / dt)
-        endX = nb_steps - 1
-        numSamples = traces.shape[1]
-        numSubSamplePoints = numSamples
-        numTraces = traces.shape[0]
-        timePoints = np.linspace(startX, endX, numSamples) * dt
-        traceSampleIndexes = np.linspace(startX, endX, numSubSamplePoints).astype(np.int)
-        subSampleTimePoints = np.linspace(startX, endX, numSubSamplePoints) * dt
+        for i in range(0, len(colNames)):
 
-        for traceIndex in range(0, numTraces):
-
-            print("TRACE" + str(traceIndex))
-            trace = traces[traceIndex]
-            peakCurrent, riseTime, decay, baselineIndex, baselineEndIndex, peakIndex, eventCurrentBaselineIndex, maxGradientIndex, minGradientIndex = self.process_trace_pam1(trace, timePoints, dt)
-
-            if peakCurrent == None or riseTime == None or decay == None:
-                sheet1.write(traceIndex + 1, 0, "NOT_FOUND")
-                sheet1.write(traceIndex + 1, 1, "NOT_FOUND")
-                sheet1.write(traceIndex + 1, 2, "NOT_FOUND")
-                sheet1.write(traceIndex + 1, 3, "NOT_FOUND")
-            else:
-                sheet1.write(traceIndex + 1, 0, traceIndex + 1)
-                sheet1.write(traceIndex + 1, 1, peakCurrent)
-                sheet1.write(traceIndex + 1, 2, riseTime)
-                sheet1.write(traceIndex + 1, 3, decay)
-
-            if self.genGraphsState.get():
-                self.gen_trace_plot_pam1(subSampleTimePoints, trace[traceSampleIndexes], traceIndex + 1, savePath, baselineIndex, baselineEndIndex, peakIndex, eventCurrentBaselineIndex, maxGradientIndex, minGradientIndex)
-
-        book.save(savePath + ".xls")
-        print("Processing complete!")
+            sheet1.write(0, i, colNames[i])
+            sheet1.col(i).width = 256 * 20
 
 
+        stimIndex = 0
+        # for each file
+        for i in range(0, len(event.decay)):
+            # for each trace
+            for x in range(0, len(event.decay[i])):
+                # for each stim
+                for y in range(0, len(event.decay[i][x])):
 
-    def process_trace_pam1(self, trace, timePoints, dt):
-
-
-        # Find the points of max and min rate of change.
-        # This should reliably find the spike generated
-        # by the electrode at the start of stimulation.
-        gradients = np.gradient(trace)
-        maxGradientIndex = np.argmax(gradients)
-        minGradientIndex = np.argmin(gradients)
-        timeOfMaxGradient = timePoints[maxGradientIndex]
-        timeOfMinGradient = timePoints[minGradientIndex]
-        # Check that the distance in time between the max and min rate of change
-        # points if less than a small amount. The spike generated by the electrode 
-        # should be very brief.
-        delta = timeOfMinGradient - timeOfMaxGradient
-
-        if 0.001 > delta > 0:
-
-            # Take a 100ms chunk of plot starting 0.12s before the spike and 
-            # ending 0.02s before the spike. We will average this chunk and call it
-            # the baseline current.
-            baselineStartIndex = int((timePoints[maxGradientIndex] - 0.12) / (dt))
-            baselineStopIndex = int((timePoints[maxGradientIndex] - 0.02) /(dt))
-            Y1_currentBaseline = np.average(trace[baselineStartIndex:baselineStopIndex])
-           
-            # Assume the end of the event is no more than 300ms after the end of the electrode spike.
-            eventEndIndex = minGradientIndex + int(0.3 / dt)
-            # Get a chunk of the plot starting just after the end of the electrode spike and ending at the end
-            # of the event.
-            eventCurrents = trace[minGradientIndex + 50:eventEndIndex]
-            # The minimum of this chunk is the event peak.
-            Y2_eventCurrentMin = np.amin(eventCurrents)
-            eventCurrentMinIndex = np.argmin(eventCurrents) + minGradientIndex + 50
-
-            # Get the time where the event peak occured.
-            X2_eventCurrentMinTime = timePoints[np.argmin(eventCurrents) + minGradientIndex + 50]
-
-            # We now have a better constraint on where the event occurred since we identified the peak
-            # earlier. Update the eventCurrents accordingly.
-            eventCurrents = trace[minGradientIndex + 50:eventCurrentMinIndex]
-
-            # Find the point in time where the event began. We search the newly updated event
-            # currents for the max, which represents the max current just before the current begins to dip.
-            X1_eventCurrentMaxIndex = np.argmax(eventCurrents) + minGradientIndex + 50
-            X1_timeBaseline = timePoints[X1_eventCurrentMaxIndex]
+                    tao = event.decay[i][x][y][0]
+                    baselineOffset = event.decay[i][x][y][1]
+                    normalizedPeakAmplitude = event.height[i][x][y][0]
+                    peakAmplitudeIndex = event.height[i][x][y][1]
+                    timeOfPeakAmplitudeFromStim = event.height[i][x][y][2]
+                    weDontKnowWhatThisValueIs = event.height[i][x][y][3]
+                    latencySeconds = event.latency[i][x][y][0]
+                    latencyIndex = event.latency[i][x][y][1]
+                    meanBaseline = event.baseline[i][x][y][0]
+                    stdevBaseline = event.baseline[i][x][y][1]
 
 
-            # Calculate values of interest
-            peakCurrent = abs(Y2_eventCurrentMin - Y1_currentBaseline)
-            riseTime = X2_eventCurrentMinTime - X1_timeBaseline
-            decay = 0
+                    sheet1.write(stimIndex + 1, 0, str(fileNames[i]))
+                    sheet1.write(stimIndex + 1, 1, str(x))
+                    sheet1.write(stimIndex + 1, 2, str(y))
+                    sheet1.write(stimIndex + 1, 3, str(tao))
+                    sheet1.write(stimIndex + 1, 4, str(baselineOffset))
+                    sheet1.write(stimIndex + 1, 5, str(normalizedPeakAmplitude))
+                    sheet1.write(stimIndex + 1, 6, str(peakAmplitudeIndex))
+                    sheet1.write(stimIndex + 1, 7, str(timeOfPeakAmplitudeFromStim))
+                    sheet1.write(stimIndex + 1, 8, str(weDontKnowWhatThisValueIs))
+                    sheet1.write(stimIndex + 1, 9, str(latencySeconds))
+                    sheet1.write(stimIndex + 1, 10, str(latencyIndex))
+                    sheet1.write(stimIndex + 1, 11, str(meanBaseline))
+                    sheet1.write(stimIndex + 1, 12, str(stdevBaseline))
+                    stimIndex += 1
 
-            return peakCurrent, riseTime, decay, baselineStartIndex, baselineStopIndex, eventCurrentMinIndex, X1_eventCurrentMaxIndex, maxGradientIndex, minGradientIndex
-        else:
-            # No spike found
-            return None, None, None, 0, 0, 0, 0, 0, 0
+        savePath = directoryPath + "/stims.xls"
+        book.save(savePath)
 
 
+    def process_files(self):
 
-    def gen_trace_plot_pam1(self, xPoints, yPoints, traceNumber, savePath, baselineIndex, baselineEndIndex, peakIndex, eventCurrentBaselineIndex, maxGradientIndex, minGradientIndex):
+        # Select a directory and get a list of files in that directory
+        directoryPath = self.select_directory()
+        fileNames = [f for f in listdir(directoryPath) if isfile(join(directoryPath, f))]
 
-        fig, ax = plt.subplots(figsize=(40, 10))  # note we must use plt.subplots, not plt.subplot
-        plt.text(xPoints[baselineIndex], yPoints[baselineIndex], "BCS", fontsize=10)
-        plt.text(xPoints[baselineEndIndex], yPoints[baselineEndIndex], "BCE", fontsize=10)
-        plt.text(xPoints[peakIndex], yPoints[peakIndex], "P", fontsize=10)
-        plt.text(xPoints[eventCurrentBaselineIndex], yPoints[eventCurrentBaselineIndex], "BT")
-        plt.text(xPoints[maxGradientIndex], yPoints[maxGradientIndex], "MAG", fontsize=10)
-        plt.text(xPoints[minGradientIndex], yPoints[minGradientIndex], "MIG", fontsize=10)
+        # Filter to get only .abf files and get full path of each .abf
+        filePaths = []
+        for fileName in fileNames:
+            if fileName.endswith('.abf'):
+                filePaths.append(directoryPath + "/" + fileName)
 
-        # BCS = Start of baseline chunk used for average
-        # BCE = End of baseline chunk used for average
-        # P = Peak
-        # BT = Time point used for baseline
-        # MAG = max gradient point
-        # MIG = min gradient point
 
-        ax.plot(xPoints, yPoints, 'b', alpha=0.7)
-        fig.savefig(savePath + str(traceNumber) + '.svg')
-        plt.close(fig)
+        # load .abf files into synwrapper
+        event = syn.load(filePaths)
+
+        # Algorithmic magic to identify events. (stim events are found using TTL 0-5V channel (not so magical), while spontaenous events
+        # are found using derivatives and magic).
+        if self.FIND_STIM_EVENTS:
+            syn.add_events(event, event_type='stim', stim_thresh=2)
+        if self.FIND_SPONTANEOUS_EVENTS:
+            syn.add_events(event, event_type='spontaneous', spont_filtsize=25, spont_threshampli=3, spont_threshderiv=-1.2, savgol_polynomial=3)
+
+        # More algorithmic magic for identifying various features of the events found in previous step.
+        event.add_all(event_direction='down', latency_method='max_height')
+
+        self.dump_synwrapper_to_xls(event, fileNames, directoryPath)
+        self.events.append(event)
 
 
 
 
 abfProc = ABFProcessor()
-traces, dt, nb_steps, nb_sweeps = abfProc.load_abf("./Kieran_Data/19507004.abf")
-abfProc.process_ABF(traces,dt,nb_steps,nb_sweeps)
+
