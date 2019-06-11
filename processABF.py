@@ -7,7 +7,7 @@ import synappy as syn
 from os import listdir
 from os.path import isfile, join
 import xlwt
-
+import ntpath
 
 
 class ABFProcessor(object):
@@ -67,7 +67,9 @@ class ABFProcessor(object):
     def select_directory(self):
         return filedialog.askdirectory()
 
-
+    def path_leaf(self, path):
+        head, tail = ntpath.split(path)
+        return tail or ntpath.basename(head)
 
 
     # Takes a synwrapper object and dumps each stimulation event into a .xls
@@ -76,8 +78,8 @@ class ABFProcessor(object):
     def dump_synwrapper_to_xls(self, event, fileNames, directoryPath):
 
 
-        colNames = ['STIMS', 'FILE_NAME', 'TRACE_NUM', 'STIM_NUM', 'TAO', 'BASELINE_OFFSET', 'NORMALIZED_PEAK_AMPLITUDE',
-                    'PEAK_AMPLITUDE_INDEX', 'PEAK_TIME_FROM_STIM_ON', '???', 'LATENCY_SECONDS',
+        colNames = ['FILE_NAME', 'TRACE_NUM', 'STIM_NUM', 'TAO', 'BASELINE_OFFSET', 'NORMALIZED_PEAK_AMPLITUDE',
+                    'PEAK_AMPLITUDE_INDEX', 'PEAK_TIME_FROM_STIM_ON', '???', 'LATENCY_SECONDS','LATENCY_INDEX',
                     'MEAN_BASELINE', 'STDEV_BASELINE']
 
         # Initialize workbook
@@ -87,7 +89,7 @@ class ABFProcessor(object):
         for i in range(0, len(colNames)):
 
             sheet1.write(0, i, colNames[i])
-            sheet1.col(i).width = 256 * 20
+            sheet1.col(i).width = 256 * 32
 
 
         stimIndex = 0
@@ -154,6 +156,12 @@ class ABFProcessor(object):
 
         # More algorithmic magic for identifying various features of the events found in previous step.
         event.add_all(event_direction='down', latency_method='max_height')
+
+
+        # Get filename of all ABF files
+        fileNames = []
+        for filePath in filePaths:
+            fileNames.append(self.path_leaf(filePath))
 
         self.dump_synwrapper_to_xls(event, fileNames, directoryPath)
         self.events.append(event)
